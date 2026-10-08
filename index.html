@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Power Platform Role Manager</title>
+<script src="https://alcdn.msauth.net/browser/3.22.0/js/msal-browser.min.js"></script>
+<style>
+  :root { --accent:#1565c0; --ok:#2e7d32; --danger:#c62828; --border:#e0e0e0; --bg:#f5f6f8; }
+  * { box-sizing: border-box; }
+  body { font-family:'Segoe UI',Arial,sans-serif; margin:0; background:var(--bg); color:#1a1a1a; }
+  header { background:#111827; color:#fff; padding:16px 28px; display:flex; justify-content:space-between; align-items:center; }
+  header h1 { font-size:18px; margin:0; }
+  main { max-width:980px; margin:24px auto; padding:0 20px 60px; }
+  .card { background:#fff; border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:20px; }
+  .card h2 { margin-top:0; font-size:16px; }
+  input[type=text] { width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; }
+  select { padding:9px 12px; border:1px solid var(--border); border-radius:6px; font-size:14px; }
+  button { background:var(--accent); color:#fff; border:none; padding:9px 16px; border-radius:6px; font-size:13.5px; cursor:pointer; }
+  button.secondary { background:#eef4fb; color:var(--accent); }
+  button.danger { background:#fdecea; color:var(--danger); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; margin-top:12px; }
+  th { text-align:left; color:#666; border-bottom:2px solid var(--border); padding:8px 10px; }
+  td { padding:8px 10px; border-bottom:1px solid #f0f0f0; vertical-align:top; }
+  .muted { color:#888; font-size:12.5px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:10px; font-size:11px; font-weight:600; }
+  .pill-user { background:#e3f2fd; color:#1565c0; }
+  .pill-app { background:#fff3e0; color:#ef6c00; }
+  .result-row { padding:8px 10px; border:1px solid var(--border); border-radius:6px; margin-top:6px; cursor:pointer; }
+  .result-row:hover { background:#f5f8ff; }
+  .result-row.selected { border-color:var(--accent); background:#eef4fb; }
+  .banner { padding:10px 14px; border-radius:6px; font-size:13px; margin-bottom:14px; }
+  .banner.error { background:#fdecea; color:var(--danger); }
+  .banner.ok { background:#e8f5e9; color:var(--ok); }
+  .signed-out-wrap { text-align:center; padding:60px 20px; }
+  code { background:#f0f0f0; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .hidden { display:none !important; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .row > * { flex:1; min-width:180px; }
+  .modal-overlay { position:fixed; inset:0; background:rgba(17,24,39,.55); display:flex; align-items:center; justify-content:center; z-index:1000; }
+  .modal-box { background:#fff; border-radius:10px; padding:22px 24px; max-width:420px; width:90%; box-shadow:0 10px 40px rgba(0,0,0,.25); }
+  .modal-box h3 { margin:0 0 10px 0; font-size:16px; }
+  .modal-box p { margin:0 0 18px 0; font-size:13.5px; color:#444; }
+  .modal-actions { display:flex; justify-content:flex-end; gap:10px; }
+  .modal-actions button { flex:none; }
+  footer { text-align:center; color:#999; font-size:12px; padding:20px; }
+</style>
+</head>
+<body>
+
+<div id="modalOverlay" class="modal-overlay hidden">
+  <div class="modal-box">
+    <h3 id="modalTitle">Confirm</h3>
+    <p id="modalMessage"></p>
+    <div class="modal-actions">
+      <button id="modalCancelBtn" class="secondary">Cancel</button>
+      <button id="modalConfirmBtn">OK</button>
+    </div>
+  </div>
+</div>
+
+<header>
+  <h1>Power Platform Role Manager</h1>
+  <div style="display:flex; align-items:center; gap:14px;">
+    <div id="whoami" class="muted"></div>
+    <button id="btnSignOut" class="secondary hidden">Sign out</button>
+  </div>
+</header>
+<main>
+
+  <div id="signedOutView" class="card signed-out-wrap">
+    <h2>Sign in to Entra ID</h2>
+    <p class="muted">Runs entirely in your browser — no backend server, nothing stored anywhere but your own browser's session. Sign in with your own organization's account.</p>
+    <button id="btnSignIn">Sign in with Microsoft</button>
+    <div id="signInStatus" class="muted" style="margin-top:14px;"></div>
+    <details style="margin-top:20px; text-align:left;">
+      <summary class="muted" style="cursor:pointer;">First time your organization is using this? (admin)</summary>
+      <p class="muted">This app needs your tenant admin to consent once to two scopes: Microsoft Graph
+        <code>User.Read.All</code> and Power Platform <code>Authorization.RoleAssignments.Read/Write</code>.
+        An admin can grant this by signing in here first, or by visiting the consent link in the README.</p>
+    </details>
+  </div>
+
+  <div id="signedInView" class="hidden">
+    <div id="banner"></div>
+
+    <div class="card">
+      <h2>1. Find a principal</h2>
+      <div class="row">
+        <input type="text" id="userSearch" placeholder="Search Entra users by name, UPN, or email…">
+      </div>
+      <div id="userResults"></div>
+
+      <details style="margin-top:14px;">
+        <summary class="muted">Assigning to an application (service principal) instead?</summary>
+        <div class="row" style="margin-top:10px;">
+          <input type="text" id="appIdInput" placeholder="App (client) ID of the application">
+          <button id="btnLookupApp" class="secondary">Resolve Enterprise App</button>
+        </div>
+        <p class="muted">Role assignments require the Enterprise Application <b>Object ID</b>, not the App/client ID — this resolves it for you.</p>
+        <div id="appResult"></div>
+      </details>
+
+      <div id="selectedPrincipal" class="muted" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card hidden" id="principalAssignmentsCard">
+      <h2>Current roles for selected principal</h2>
+      <p class="muted">Scoped lookup for just this one principal — never the whole tenant's assignments (that doesn't scale).</p>
+      <table id="principalAssignmentsTable">
+        <thead><tr><th>Role</th><th>Created</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>2. Choose a role</h2>
+      <select id="roleSelect"><option>Loading roles…</option></select>
+      <p id="roleDescription" class="muted" style="margin-top:8px;"></p>
+    </div>
+
+    <div class="card">
+      <button id="btnAssign" disabled>Assign role</button>
+      <span id="assignStatus" class="muted" style="margin-left:10px;"></span>
+    </div>
+
+    <div class="card">
+      <h2>Recent activity (this session)</h2>
+      <p class="muted">Updates immediately when you assign or remove a role — no tenant-wide refresh needed.</p>
+      <table id="activityTable">
+        <thead><tr><th>When</th><th>Action</th><th>Principal</th><th>Role</th></tr></thead>
+        <tbody><tr><td colspan="4" class="muted">No activity yet this session.</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+<footer>Runs 100% client-side · <a href="https://github.com/kozziag/power-platform-role-manager" style="color:#999;">source</a></footer>
+
+<script src="app.js"></script>
+</body>
+</html>
