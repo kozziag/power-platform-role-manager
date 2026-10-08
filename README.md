@@ -9,6 +9,12 @@ server this project controls.
 
 Live app: **https://kozziag.github.io/power-platform-role-manager/**
 
+Prefer PowerShell instead of a web browser? See
+[`scripts/Invoke-PowerPlatformRoleManager.ps1`](scripts/Invoke-PowerPlatformRoleManager.ps1)
+-- an interactive console version with the same scoped lookups and live
+activity feedback, requiring no custom app registration or admin consent at
+all (see its own section below).
+
 ## Why this architecture
 
 Both Microsoft Graph and the Power Platform Authorization API were verified
@@ -69,6 +75,38 @@ tenant, because that does not scale in orgs with large numbers of
 assignments. A client-side "recent activity" log shows what changed in your
 own session in real time instead, with no extra network calls.
 
+## PowerShell alternative (no app registration, no admin consent)
+
+`scripts/Invoke-PowerPlatformRoleManager.ps1` is an interactive console
+version of this same tool for admins who prefer PowerShell over a browser.
+
+**Why it needs no setup at all (unlike the web app above):** it signs you in
+via `Connect-AzAccount`, which uses the Az PowerShell module's own
+pre-consented, first-party multi-tenant app registration to get tokens for
+Microsoft Graph and the Power Platform API -- the same mechanism the Azure
+CLI uses under the hood. There's no custom app registration to register and
+no tenant admin consent step to complete before you can run it.
+
+Features:
+- Interactive menu-driven flow with colorized, real-time feedback on every
+  action (`[OK]` / `[!!]` / `[ERR]` prefixes, spinners during API calls)
+- Search Entra users, or resolve a service principal from an App ID
+- View a principal's existing roles (same scoped `$filter`, not a tenant-wide
+  dump) before assigning
+- Explicit `type 'yes' to confirm` prompt before every assign/remove --
+  nothing destructive happens without an explicit, typed confirmation
+- A running, in-session activity log (`Format-Table`) of everything you changed
+- Real, unmodified API error messages surfaced on failure -- never a guess
+
+Requirements: PowerShell 5.1+ (or 7+), the `Az.Accounts` module (the script
+offers to install it for you), and sufficient Power Platform RBAC permission
+in your own tenant to actually assign/view roles -- same permission model as
+the web app.
+
+```powershell
+.\scripts\Invoke-PowerPlatformRoleManager.ps1
+```
+
 ## Local development
 
 Just serve the `web/` folder with any static file server, e.g.:
@@ -87,3 +125,5 @@ URI above).
 - `web/app.js` — all logic: MSAL.js auth, Graph/Power Platform API calls,
   modal dialogs (no native browser popups), scoped assignment lookups,
   real-time activity log
+- `scripts/Invoke-PowerPlatformRoleManager.ps1` — PowerShell console
+  alternative, no app registration required
