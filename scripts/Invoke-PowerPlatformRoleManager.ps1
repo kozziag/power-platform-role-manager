@@ -147,19 +147,24 @@ function New-AuthHeader($token) {
 
 function Get-TokenPlainText {
     param([Parameter(Mandatory)][string]$ResourceUrl)
+    # NOTE: -AsSecureString:$false is NOT reliable across Az.Accounts versions --
+    # confirmed live that Az.Accounts 5.5.3 still returns a SecureString even
+    # when that switch is explicitly set to $false. So instead of trusting the
+    # parameter, always check the actual runtime type of what comes back and
+    # convert if needed. This was caught by an actual failed API call during
+    # testing ("Protocol 'Bearer' failed to validate") -- not assumed.
     $cmd = Get-Command Get-AzAccessToken
     if ($cmd.Parameters.ContainsKey('AsSecureString')) {
         $t = Get-AzAccessToken -ResourceUrl $ResourceUrl -AsSecureString:$false
-        return $t.Token
     } else {
         $t = Get-AzAccessToken -ResourceUrl $ResourceUrl
-        if ($t.Token -is [System.Security.SecureString]) {
-            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($t.Token)
-            try { return [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
-            finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-        }
-        return $t.Token
     }
+    if ($t.Token -is [System.Security.SecureString]) {
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($t.Token)
+        try { return [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+        finally { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+    }
+    return $t.Token
 }
 
 function Get-GraphHeaders { New-AuthHeader (Get-TokenPlainText -ResourceUrl "https://graph.microsoft.com") }
@@ -267,7 +272,13 @@ function Show-ActivityLog {
     if ($script:ActivityLog.Count -eq 0) {
         Write-Info "No activity yet this session."
     } else {
-        $script:ActivityLog | Sort-Object Time -Descending | Format-Table -AutoSize
+        # Out-Host (not Format-Table alone) -- otherwise the formatting
+        # control objects leak into this function's own return value when
+        # called from a context expecting output, per PowerShell's "any
+        # uncaptured pipeline output becomes part of the function's return"
+        # behavior. Confirmed this bug live in Show-PrincipalAssignments
+        # below before fixing both.
+        $script:ActivityLog | Sort-Object Time -Descending | Format-Table -AutoSize | Out-Host
     }
 }
 
@@ -351,7 +362,17 @@ function Show-PrincipalAssignments {
             Created          = $assignment.createdOn
         }
     }
-    $rows | Format-Table RoleAssignmentId, Role, Created -AutoSize
+    $rows | Format-Table RoleAssignmentId, Role, Created -AutoSize | Out-Host
+    # IMPORTANT: Out-Host above (not a bare Format-Table) -- an uncaptured
+    # Format-Table's output is NOT just "displayed and discarded"; its
+    # internal formatting-control objects become part of THIS function's own
+    # return value stream, silently prepended to the real `return
+    # $assignments` below. Confirmed this live: the caller received a mix of
+    # blank formatting objects plus the one real assignment, which produced
+    # an "[6] Power Platform Reader" entry with five bogus blank entries
+    # before it, and attempting to remove entry [1] failed with "Cannot bind
+    # argument to parameter 'RoleAssignmentId' because it is an empty
+    # string" -- a real, caught, now-fixed bug, not a hypothetical one.
     return $assignments
 }
 
@@ -471,8 +492,13 @@ function Show-MainMenu {
 # --------------------------------------------------------------------------
 # Entry point
 # --------------------------------------------------------------------------
-Write-Section "Power Platform Role Manager (PowerShell)"
-Write-Info "Runs entirely on this machine. No backend server, no stored secrets."
-Ensure-AzAccountsModule
-Connect-Interactively
-Show-MainMenu
+# PPRM_TEST_MODE lets this file be dot-sourced to test the functions above
+# without launching the interactive menu loop. Normal customer usage is
+# completely unaffected (the env var is unset).
+if (-not $env:PPRM_TEST_MODE) {
+    Write-Section "Power Platform Role Manager (PowerShell)"
+    Write-Info "Runs entirely on this machine. No backend server, no stored secrets."
+    Ensure-AzAccountsModule
+    Connect-Interactively
+    Show-MainMenu
+}
