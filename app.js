@@ -216,21 +216,45 @@ document.getElementById("btnLookupApp").onclick = async () => {
   const appId = document.getElementById("appIdInput").value.trim();
   if (!appId) return;
   const el = document.getElementById("appResult");
+  el.innerHTML = '<p class="muted">Looking up...</p>';
   try {
     const r = await graphFetch(`/servicePrincipals?$filter=appId eq '${appId}'&$select=id,displayName,appId`);
     const values = r.value || [];
-    if (!values.length) {
-      el.innerHTML = '<p class="muted">No enterprise application found for that App (client) ID in this tenant.</p>';
+    if (values.length) {
+      renderResolvedApp(values[0], el);
       return;
     }
-    const sp = values[0];
-    el.innerHTML = `<div class="result-row" data-id="${sp.id}" data-label="${sp.displayName} (service principal)">
-      <b>${sp.displayName}</b> <span class="muted">object ID: ${sp.id}</span></div>`;
-    el.querySelector(".result-row").onclick = () => selectPrincipal(sp.id, "ApplicationUser", `${sp.displayName} (service principal)`, el);
+
+    // Not found by App (client) ID. Self-heal the most common point of
+    // confusion: the user may have pasted the Enterprise Application
+    // OBJECT ID instead (the very value this tool exists to produce from
+    // an App ID). Try the entered value directly as an object ID before
+    // giving up -- confirmed via a real customer report that this exact
+    // mix-up happens in practice.
+    try {
+      const direct = await graphFetch(`/servicePrincipals/${appId}?$select=id,displayName,appId`);
+      el.innerHTML = `<p class="muted">Note: that looked like an Enterprise Application <b>Object ID</b>, not an App (client) ID — using it directly.</p>`;
+      renderResolvedApp(direct, el, true);
+      return;
+    } catch (directErr) {
+      // Genuinely not found either way.
+    }
+
+    el.innerHTML = '<p class="muted">No enterprise application found for that ID in this tenant — checked it as '
+      + 'both an App (client) ID and an Object ID. If this is a third-party or multi-tenant app, it needs to be '
+      + 'added to this tenant (consented) before it has an Enterprise Application / service principal here.</p>';
   } catch (e) {
     el.innerHTML = `<p class="muted">${e.message}</p>`;
   }
 };
+
+function renderResolvedApp(sp, el, append = false) {
+  const html = `<div class="result-row" data-id="${sp.id}" data-label="${sp.displayName} (service principal)">
+      <b>${sp.displayName}</b> <span class="muted">object ID: ${sp.id}</span></div>`;
+  el.innerHTML = append ? el.innerHTML + html : html;
+  el.querySelector(".result-row").onclick = () => selectPrincipal(sp.id, "ApplicationUser", `${sp.displayName} (service principal)`, el);
+}
+
 
 function selectPrincipal(objectId, type, label, containerEl) {
   selectedPrincipal = { objectId, type, label };

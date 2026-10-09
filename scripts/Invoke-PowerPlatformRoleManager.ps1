@@ -195,13 +195,23 @@ function Resolve-ServicePrincipal {
     $uri = "https://graph.microsoft.com/v1.0/servicePrincipals?`$filter=appId eq '$AppId'&`$select=id,displayName,appId"
     try {
         $r = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
-        if ($r.value.Count -eq 0) {
-            Write-ErrorMsg "No enterprise application found for App (client) ID '$AppId' in this tenant."
-            return $null
-        }
-        return $r.value[0]
+        if ($r.value.Count -gt 0) { return $r.value[0] }
     } catch {
         Write-ErrorMsg "Lookup failed: $(Get-FriendlyApiError $_)"
+        return $null
+    }
+
+    # Not found by App (client) ID. Self-heal the most common point of
+    # confusion: the entered value may already be the Enterprise Application
+    # OBJECT ID (the value this function exists to produce FROM an App ID).
+    # Confirmed via a real customer report that this mix-up happens in
+    # practice -- try it directly as an object ID before giving up.
+    try {
+        $direct = Invoke-RestMethod -Uri "https://graph.microsoft.com/v1.0/servicePrincipals/$AppId`?`$select=id,displayName,appId" -Headers $headers -Method Get
+        Write-WarnMsg "That looked like an Enterprise Application Object ID, not an App (client) ID -- using it directly."
+        return $direct
+    } catch {
+        Write-ErrorMsg "No enterprise application found for '$AppId' in this tenant -- checked it as both an App (client) ID and an Object ID. If this is a third-party or multi-tenant app, it needs to be added to this tenant (consented) before it has an Enterprise Application / service principal here."
         return $null
     }
 }
